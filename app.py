@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="ETF Seasonality", layout="centered")
 
 st.title("📈 ETF Seasonality Dashboard")
-st.markdown("Analyze historical average returns vs. current year performance.")
+st.markdown("Analyze historical averages, win rates, and current year tracking.")
 
 # --- USER CONTROLS ---
 col1, col2 = st.columns(2)
@@ -65,37 +65,63 @@ with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
             background_color = '#1E1E1E'
 
             def plot_roc_bars(ax, dataset, title):
-                # Pivot dynamically based on Week or Month
                 grid = dataset.pivot_table(values='ROC', index=time_col, columns='Year')
                 
                 if period_type == "Weekly" and 53 in grid.index:
                     if grid.loc[53].isna().sum() > (len(grid.columns) / 2):
                         grid = grid.drop(index=53)
-                        
+                
+                # --- NEW: Calculate Win Rate before adding the Average column ---
+                # Counts how many years were > 0, divides by total years with data
+                win_rate_series = (grid > 0).sum(axis=1) / grid.notna().sum(axis=1) * 100
+                
+                # Now calculate the Average
                 grid['Average_ROC'] = grid.mean(axis=1)
+                
                 x_vals = np.array(grid.index.astype(int))
                 y_vals = np.array(grid['Average_ROC'])
+                win_rates = np.array(win_rate_series)
                 
-                # 1. Plot the Historical Average Bars
+                # 1. Plot the Historical Average Bars (Monochrome)
                 colors = ['#555555' if val > 0 else '#BBBBBB' for val in y_vals]
                 ax.bar(x_vals, y_vals, color=colors, edgecolor='none', label='Historical Avg', zorder=1)
                 ax.axhline(0, color='white', linewidth=0.8, alpha=0.5, zorder=2)
                 
-                # --- NEW: Plot the Current Year Overlay ---
+                # --- NEW: Add Win Rate % Text above/below bars ---
+                # We calculate a small offset so the text floats perfectly past the tip of the bar
+                offset = max(abs(y_vals[~np.isnan(y_vals)])) * 0.08 
+                
+                for i, x in enumerate(x_vals):
+                    if not np.isnan(y_vals[i]):
+                        y_pos = y_vals[i]
+                        wr_text = f"{int(win_rates[i])}%"
+                        
+                        # If bar is positive, put text above. If negative, put below.
+                        # We rotate 90 degrees for weekly so it doesn't overlap, 0 for monthly
+                        rot = 90 if period_type == "Weekly" else 0
+                        
+                        if y_pos > 0:
+                            ax.text(x, y_pos + offset, wr_text, ha='center', va='bottom', fontsize=7, color='white', rotation=rot, zorder=4)
+                        else:
+                            ax.text(x, y_pos - offset, wr_text, ha='center', va='top', fontsize=7, color='white', rotation=rot, zorder=4)
+
+                # 2. Plot Current Year Overlay (Changed to Crisp White to match theme)
                 if current_year in grid.columns:
                     current_year_data = grid[current_year]
-                    # We use a bright gold line (#FFD700) with markers to stand out against the grey bars
-                    # zorder=3 ensures the line is drawn ON TOP of the bars
-                    ax.plot(x_vals, current_year_data, color='#FFD700', marker='o', markersize=4, 
+                    ax.plot(x_vals, current_year_data, color='#FFFFFF', marker='o', markersize=4, 
                             linestyle='-', linewidth=2, label=f'{current_year} Actual ROC', zorder=3)
                 
-                # Draw the dynamic red line for the current week/month
+                # 3. Current Time Indicator (Red Dash)
                 ax.axvline(x=current_time_val, color='#FF4444', linestyle='--', linewidth=1.5, 
                            alpha=0.8, label=f'Current {time_col}', zorder=0)
                 
-                # Formatting
-                ax.set_title(title, fontsize=12, fontweight='bold', color='white', pad=10)
+                # Formatting & Aesthetic Adjustments
+                ax.set_title(title, fontsize=12, fontweight='bold', color='white', pad=15)
                 ax.set_ylabel('ROC (%)', fontsize=9, color='lightgray')
+                
+                # Expand Y-axis slightly so the text labels don't get cut off at the top/bottom
+                y_min, y_max = ax.get_ylim()
+                ax.set_ylim(y_min * 1.25, y_max * 1.25)
                 
                 ax.set_xticks(x_vals)
                 ax.tick_params(axis='x', labelsize=8, colors='lightgray')
@@ -108,14 +134,14 @@ with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
                 ax.spines['bottom'].set_color('gray')
                 ax.set_facecolor(background_color)
                 
-                # Updated Legend to show the new line
                 ax.legend(loc='upper left', fontsize=8, framealpha=0.2, facecolor=background_color)
 
-            fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(10, 12), facecolor=background_color)
+            # Generate the 3-row layout
+            fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(11, 14), facecolor=background_color)
 
-            plot_roc_bars(axes[0], df_5yr, f"{ticker} 5-Year Average vs Current Year")
-            plot_roc_bars(axes[1], df_10yr, f"{ticker} 10-Year Average vs Current Year")
-            plot_roc_bars(axes[2], df_max, f"{ticker} Max (Since 2010) Average vs Current Year")
+            plot_roc_bars(axes[0], df_5yr, f"{ticker} 5-Year Average | Win Rate % | Current Year")
+            plot_roc_bars(axes[1], df_10yr, f"{ticker} 10-Year Average | Win Rate % | Current Year")
+            plot_roc_bars(axes[2], df_max, f"{ticker} Max (Since 2010) Average | Win Rate % | Current Year")
 
             axes[2].set_xlabel(x_label, fontsize=10, color='lightgray', labelpad=10)
             plt.tight_layout(pad=3.0)
