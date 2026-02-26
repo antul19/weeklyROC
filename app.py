@@ -6,17 +6,14 @@ import numpy as np
 from datetime import datetime
 
 # --- PAGE SETUP ---
-# Expand the layout slightly to accommodate the new high-res chart
 st.set_page_config(page_title="ETF Seasonality", layout="centered")
 
 st.title("📈 ETF Seasonality Dashboard")
 st.markdown("Analyze historical averages, win rates, and current year tracking.")
 
-# --- NEW: Explanation Box ---
 st.info("**💡 What is Win Rate?** The Win Rate shows the percentage of time this specific week or month historically ended with a positive return. *Example: A high average return but a low Win Rate (e.g., 20%) means a single freak outlier year skewed the data, making it a low-probability trade.*")
 
 # --- USER CONTROLS ---
-# Split into 3 columns to fit our new toggle
 col1, col2, col3 = st.columns(3)
 
 with col1:
@@ -26,12 +23,9 @@ with col2:
     period_type = st.radio("Timeframe:", ["Weekly", "Monthly"], horizontal=True)
 
 with col3:
-    # --- NEW: Win Rate Toggle ---
-    # Adds some vertical space so it aligns nicely with the other inputs
     st.write("") 
     show_win_rate = st.checkbox("Show Win Rate %", value=True)
 
-# Set dynamic variables based on the toggle
 if period_type == "Weekly":
     yf_interval = "1wk"
     time_col = "Week"
@@ -43,10 +37,18 @@ else:
     x_label = "Month of the Year (1-12)"
     current_time_val = datetime.now().month
 
+# --- NEW: LIGHTNING-FAST CACHING ---
+# ttl=3600 tells Streamlit to hold this data in memory for 1 hour (3600 seconds).
+# After an hour, it will automatically clear the cache and fetch fresh market prices.
+@st.cache_data(ttl=3600)
+def get_historical_data(ticker_symbol, interval):
+    return yf.download(ticker_symbol, start="2010-01-01", interval=interval)
+
 # --- DATA FETCHING ---
 with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
     try:
-        data = yf.download(ticker, start="2010-01-01", interval=yf_interval)
+        # Instead of calling yf.download directly, we call our new cached function!
+        data = get_historical_data(ticker, yf_interval)
         
         if data.empty:
             st.error("No data found. Please check the ticker symbol.")
@@ -82,21 +84,17 @@ with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
                     if grid.loc[53].isna().sum() > (len(grid.columns) / 2):
                         grid = grid.drop(index=53)
                 
-                # Calculate Win Rate before adding the Average column
                 win_rate_series = (grid > 0).sum(axis=1) / grid.notna().sum(axis=1) * 100
-                
                 grid['Average_ROC'] = grid.mean(axis=1)
                 
                 x_vals = np.array(grid.index.astype(int))
                 y_vals = np.array(grid['Average_ROC'])
                 win_rates = np.array(win_rate_series)
                 
-                # 1. Plot the Historical Average Bars (Monochrome)
                 colors = ['#555555' if val > 0 else '#BBBBBB' for val in y_vals]
                 ax.bar(x_vals, y_vals, color=colors, edgecolor='none', label='Historical Avg', zorder=1)
                 ax.axhline(0, color='white', linewidth=0.8, alpha=0.5, zorder=2)
                 
-                # 2. Add Win Rate % Text (Controlled by the toggle)
                 if show_win_rate:
                     offset = max(abs(y_vals[~np.isnan(y_vals)])) * 0.08 
                     for i, x in enumerate(x_vals):
@@ -110,21 +108,17 @@ with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
                             else:
                                 ax.text(x, y_pos - offset, wr_text, ha='center', va='top', fontsize=7, color='white', rotation=rot, zorder=4)
 
-                # 3. Plot Current Year Overlay (Crisp White)
                 if current_year in grid.columns:
                     current_year_data = grid[current_year]
                     ax.plot(x_vals, current_year_data, color='#FFFFFF', marker='o', markersize=4, 
                             linestyle='-', linewidth=2, label=f'{current_year} Actual ROC', zorder=3)
                 
-                # 4. Current Time Indicator (Red Dash)
                 ax.axvline(x=current_time_val, color='#FF4444', linestyle='--', linewidth=1.5, 
                            alpha=0.8, label=f'Current {time_col}', zorder=0)
                 
-                # Formatting
                 ax.set_title(title, fontsize=12, fontweight='bold', color='white', pad=15)
                 ax.set_ylabel('ROC (%)', fontsize=9, color='lightgray')
                 
-                # Expand Y-axis to give text breathing room
                 y_min, y_max = ax.get_ylim()
                 ax.set_ylim(y_min * 1.25, y_max * 1.25)
                 
@@ -141,8 +135,6 @@ with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
                 
                 ax.legend(loc='upper left', fontsize=8, framealpha=0.2, facecolor=background_color)
 
-            # --- NEW: High Definition Fix (dpi=300) ---
-            # Setting DPI to 300 makes the chart look razor sharp on 4K monitors and desktop screens
             fig, axes = plt.subplots(nrows=3, ncols=1, figsize=(11, 14), facecolor=background_color, dpi=300)
 
             title_suffix = "| Win Rate % | Current Year" if show_win_rate else "| Current Year"
@@ -153,7 +145,6 @@ with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
             axes[2].set_xlabel(x_label, fontsize=10, color='lightgray', labelpad=10)
             plt.tight_layout(pad=3.0)
 
-            # use_container_width=True ensures it scales perfectly to whatever screen it's on
             st.pyplot(fig, use_container_width=True)
 
     except Exception as e:
