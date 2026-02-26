@@ -145,7 +145,8 @@ with st.spinner(f"Fetching {period_type.lower()} data for {ticker}..."):
             axes[2].set_xlabel(x_label, fontsize=10, color='lightgray', labelpad=10)
             plt.tight_layout(pad=3.0)
 
-            st.pyplot(fig, use_container_width=True)
+            st.pyplot(fig, width='stretch')
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
+
