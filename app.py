@@ -507,7 +507,7 @@ def make_presidential_cycle_chart(cycle_data: dict) -> go.Figure:
     layout = _base_layout("S&P 500: 48-Month Presidential Cycle", height=550)
     
     # --- FIX THE SPACING ---
-    layout["margin"]["t"] = 90    # Increased top margin
+    layout["margin"]["t"] = 50    # Increased top margin
     layout["legend"]["y"] = 1.15  # Pushed legend safely above the labels
     # -----------------------
     
