@@ -191,7 +191,13 @@ COLORS = {
     # Global Macro Colors
     "us":         "#00E5FF",  # Neon Blue
     "canada":     "#FF3333",  # Crimson Red
-    "india":      "#FFB300",  # Gold
+    "india":      "#FFA500",  # Orange
+    "gold":       "#FFD700",  # True Gold
+    "btc":        "#F7931A",  # Bitcoin Orange
+    "vix":        "#FF00FF",  # Magenta
+    "oil":        "#00FF00",  # Lime Green
+    "tnx":        "#B0C4DE",  # Light Steel Blue
+    
     "macro_zone": "rgba(255, 68, 68, 0.12)"
 }
 
@@ -265,19 +271,21 @@ def fetch_global_macro_data() -> dict:
     tickers = {
         "US (^GSPC)": "^GSPC",
         "Canada (^GSPTSE)": "^GSPTSE",
-        "India (^NSEI)": "^NSEI"
+        "India (^NSEI)": "^NSEI",
+        "Gold (GC=F)": "GC=F",
+        "Bitcoin (BTC-USD)": "BTC-USD",
+        "Volatility (^VIX)": "^VIX",
+        "Crude Oil (CL=F)": "CL=F",
+        "10Yr Yield (^TNX)": "^TNX"
     }
     data_dict = {}
     
-    # We ask for '1d' data starting 1927 to bypass Yahoo's monthly limits, 
-    # then compress into monthly ('ME') ourselves.
     for name, ticker in tickers.items():
         try:
             df = yf.download(ticker, start="1927-12-01", interval="1d", auto_adjust=False, progress=False)
             if not df.empty:
                 close = df["Close"]
                 if isinstance(close, pd.DataFrame): close = close.squeeze()
-                # Resample daily data to monthly end-of-month last prices
                 close = close.dropna().resample("ME").last().dropna()
                 data_dict[name] = close
         except Exception:
@@ -537,17 +545,6 @@ def make_presidential_cycle_chart(cycle_data: dict) -> go.Figure:
     fig.update_layout(**layout)
     return fig
 
-# Helper to plot Macro Zones
-def _add_macro_zones(fig):
-    for ev in MACRO_EVENTS:
-        fig.add_vrect(
-            x0=ev["start"], x1=ev["end"],
-            fillcolor=COLORS["macro_zone"], opacity=0.8, layer="below", line_width=0,
-            annotation_text=ev["name"], annotation_position="top left",
-            annotation_font=dict(family="IBM Plex Mono", size=10, color="#FFFFFF"),
-            annotation_textangle=-90
-        )
-
 def make_rebased_macro_chart(data_dict: dict) -> go.Figure:
     fig = go.Figure()
     
@@ -560,7 +557,16 @@ def make_rebased_macro_chart(data_dict: dict) -> go.Figure:
     # Rebase all to 100 at the start of the overlapping timeframe
     df_rebased = df_combined / df_combined.iloc[0] * 100
     
-    line_colors = {"US (^GSPC)": COLORS["us"], "Canada (^GSPTSE)": COLORS["canada"], "India (^NSEI)": COLORS["india"]}
+    line_colors = {
+        "US (^GSPC)": COLORS["us"], 
+        "Canada (^GSPTSE)": COLORS["canada"], 
+        "India (^NSEI)": COLORS["india"],
+        "Gold (GC=F)": COLORS["gold"],
+        "Bitcoin (BTC-USD)": COLORS["btc"],
+        "Volatility (^VIX)": COLORS["vix"],
+        "Crude Oil (CL=F)": COLORS["oil"],
+        "10Yr Yield (^TNX)": COLORS["tnx"]
+    }
     
     for col in df_rebased.columns:
         fig.add_trace(go.Scatter(
@@ -569,39 +575,22 @@ def make_rebased_macro_chart(data_dict: dict) -> go.Figure:
             name=col, hovertemplate="Date: %{x|%b %Y}<br>Rebased Value: %{y:,.1f}<extra></extra>"
         ))
 
-    _add_macro_zones(fig)
+    # Add historical shaded crisis zones
+    for ev in MACRO_EVENTS:
+        fig.add_vrect(
+            x0=ev["start"], x1=ev["end"],
+            fillcolor=COLORS["macro_zone"], opacity=0.8, layer="below", line_width=0,
+            annotation_text=ev["name"], annotation_position="top left",
+            annotation_font=dict(family="IBM Plex Mono", size=10, color="#FFFFFF"),
+            annotation_textangle=-90
+        )
 
     start_yr = df_rebased.index[0].year
-    title_str = f"Global Market Resilience (Rebased to 100 in {start_yr}) — Log Scale"
-    layout = _base_layout(title_str, height=550)
+    title_str = f"Global Macro Race (Rebased to 100 in {start_yr}) — Log Scale"
+    layout = _base_layout(title_str, height=600)
     layout["margin"]["t"] = 60
     layout["yaxis"]["type"] = "log"
-    layout["yaxis"]["title"] = "Index Value (Log Scale, Base 100)"
-
-    fig.update_layout(**layout)
-    return fig
-
-def make_isolated_macro_chart(series: pd.Series, name: str) -> go.Figure:
-    fig = go.Figure()
-
-    line_color = COLORS["us"]
-    if "Canada" in name: line_color = COLORS["canada"]
-    elif "India" in name: line_color = COLORS["india"]
-
-    fig.add_trace(go.Scatter(
-        x=series.index, y=series.values,
-        mode="lines", line=dict(color=line_color, width=2),
-        name=name, hovertemplate="Date: %{x|%b %Y}<br>Index Value: %{y:,.0f}<extra></extra>"
-    ))
-
-    _add_macro_zones(fig)
-
-    start_yr = series.index[0].year
-    title_str = f"{name} Market Resilience (Since {start_yr}) — Log Scale"
-    layout = _base_layout(title_str, height=450)
-    layout["margin"]["t"] = 60
-    layout["yaxis"]["type"] = "log"
-    layout["yaxis"]["title"] = "Raw Index Value (Log Scale)"
+    layout["yaxis"]["title"] = "Index/Asset Value (Log Scale, Base 100)"
 
     fig.update_layout(**layout)
     return fig
@@ -696,33 +685,32 @@ with tab3:
 with tab4:
     st.markdown("""
     <div style="background-color: #12151c; border: 1px solid #1e2330; border-left: 3px solid #FF4444; border-radius: 6px; padding: 1rem; margin-bottom: 1rem; font-size: 0.85rem; color: #8d9ab0;">
-    <strong>Global Macro Context:</strong> Tracking market resilience across developed and emerging economies. All charts are rendered on a <strong>Logarithmic Scale</strong> to accurately visualize compound growth.
+    <strong>Global Macro Context:</strong> Tracking market resilience across different asset classes. Select the assets below to race them on a <strong>Logarithmic Scale</strong> (rebased to 100 at the earliest shared date).
     </div>
     """, unsafe_allow_html=True)
-    
-    view_type = st.radio("Select View:", ["Option A: Normalized Race (Rebased to 100)", "Option B: Isolated Maximum History"], horizontal=True)
     
     with st.spinner("Loading Global Macro Data..."):
         global_data = fetch_global_macro_data()
         
         if global_data:
-            if "Option A" in view_type:
-                # NEW: Dynamic selector to choose which countries to race
-                selected_countries = st.multiselect(
-                    "Select indices to race (Removing newer indices allows the chart to start earlier):",
-                    options=list(global_data.keys()),
-                    default=list(global_data.keys())
-                )
-                
-                if selected_countries:
-                    # Filter the data dictionary to only include selected countries
-                    filtered_data = {k: global_data[k] for k in selected_countries}
-                    st.plotly_chart(make_rebased_macro_chart(filtered_data), use_container_width=True, config={"displayModeBar": False})
-                else:
-                    st.warning("Please select at least one index to display.")
+            st.markdown('<div class="section-header">Select Assets to Compare</div>', unsafe_allow_html=True)
+            cols = st.columns(4)
+            
+            selected_assets = []
+            asset_names = list(global_data.keys())
+            
+            for i, asset_name in enumerate(asset_names):
+                # Default to checking US and Canada on load
+                default_val = True if "US" in asset_name or "Canada" in asset_name else False
+                with cols[i % 4]:
+                    if st.checkbox(asset_name, value=default_val):
+                        selected_assets.append(asset_name)
+            
+            if selected_assets:
+                filtered_data = {k: global_data[k] for k in selected_assets}
+                st.plotly_chart(make_rebased_macro_chart(filtered_data), use_container_width=True, config={"displayModeBar": False})
             else:
-                for name, series in global_data.items():
-                    st.plotly_chart(make_isolated_macro_chart(series, name), use_container_width=True, config={"displayModeBar": False})
+                st.warning("Please select at least one asset to display.")
         else:
             st.error("Failed to load global macro data.")
 
