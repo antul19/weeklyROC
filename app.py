@@ -318,6 +318,7 @@ def _base_layout(title: str, height: int = 380) -> dict:
             showline=True,
             tickfont=dict(family="IBM Plex Mono", size=10, color="#5a6278"),
             title_font=dict(family="IBM Plex Mono", size=10, color="#5a6278"),
+            rangemode="nonnegative",
         ),
         yaxis=dict(
             gridcolor=COLORS["grid"],
@@ -391,9 +392,13 @@ def make_bar_chart(
     if cur_x:
         fig.add_trace(go.Scatter(
             x=cur_x, y=cur_y,
-            mode="lines+markers",
-            line=dict(color=COLORS["cur_year"], width=3),
-            marker=dict(size=6, color=COLORS["cur_year"]),
+            mode="markers",  # <-- Changed from "lines+markers"
+            marker=dict(
+                symbol="diamond", 
+                size=8, 
+                color=COLORS["cur_year"], 
+                line=dict(color="#000000", width=1) # Adds a tiny black border to the diamond so it pops
+            ),
             name=f"{CURRENT_YEAR} Actual",
             hovertemplate="Period %{x}<br>Actual: %{y:.2f}%<extra></extra>",
             zorder=10,
