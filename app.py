@@ -707,7 +707,19 @@ with tab4:
         
         if global_data:
             if "Option A" in view_type:
-                st.plotly_chart(make_rebased_macro_chart(global_data), use_container_width=True, config={"displayModeBar": False})
+                # NEW: Dynamic selector to choose which countries to race
+                selected_countries = st.multiselect(
+                    "Select indices to race (Removing newer indices allows the chart to start earlier):",
+                    options=list(global_data.keys()),
+                    default=list(global_data.keys())
+                )
+                
+                if selected_countries:
+                    # Filter the data dictionary to only include selected countries
+                    filtered_data = {k: global_data[k] for k in selected_countries}
+                    st.plotly_chart(make_rebased_macro_chart(filtered_data), use_container_width=True, config={"displayModeBar": False})
+                else:
+                    st.warning("Please select at least one index to display.")
             else:
                 for name, series in global_data.items():
                     st.plotly_chart(make_isolated_macro_chart(series, name), use_container_width=True, config={"displayModeBar": False})
