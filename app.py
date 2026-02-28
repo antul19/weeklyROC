@@ -185,50 +185,46 @@ COLORS = {
 }
 
 # ─────────────────────────────────────────────
-# DATA FETCHING (RENAMED TO BREAK CACHE)
+# DATA FETCHING (Nuclear Cache Breaker + Native Intervals)
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_yfinance_data(ticker: str, start_year: int) -> pd.DataFrame | None:
+def fetch_seasonality_data_v4(ticker: str, start_year: int, timeframe: str) -> pd.DataFrame | None:
     try:
-        start_str = f"{start_year - 1}-12-01"
-        df = yf.download(ticker, start=start_str, auto_adjust=True, progress=False)
+        # Give a 2-month prior padding to guarantee Period 1 of start_year computes cleanly
+        start_str = f"{start_year - 1}-11-01"
+        interval = "1wk" if timeframe == "Weekly" else "1mo"
+        
+        df = yf.download(ticker, start=start_str, interval=interval, auto_adjust=True, progress=False)
         if df.empty: return None
+        
         close = df["Close"]
         if isinstance(close, pd.DataFrame): close = close.squeeze()
         close = close.dropna()
-        close.index = pd.to_datetime(close.index)
-        return close.to_frame(name="close")
+        
+        # Compute ROC *before* extracting dates
+        roc = close.pct_change() * 100
+        roc_df = roc.to_frame(name="roc")
+        roc_df.index = pd.to_datetime(roc_df.index)
+        
+        if timeframe == "Weekly":
+            roc_df["year"] = roc_df.index.isocalendar().year.astype(int)
+            roc_df["period"] = roc_df.index.isocalendar().week.astype(int)
+            w53_years = roc_df[roc_df["period"] == 53]["year"].nunique()
+            if w53_years < 3: roc_df = roc_df[roc_df["period"] != 53]
+        else:
+            roc_df["year"] = roc_df.index.year
+            roc_df["period"] = roc_df.index.month
+            
+        # Filter to the requested timeline
+        roc_df = roc_df[roc_df["year"] >= start_year]
+        return roc_df
     except Exception:
         return None
 
-def compute_seasonality(df: pd.DataFrame, timeframe: str, start_year: int) -> dict:
-    close = df["close"].copy()
-
-    if timeframe == "Weekly":
-        resampled = close.resample("W-FRI").last().dropna()
-        roc = resampled.pct_change().dropna() * 100
-        roc.index = pd.to_datetime(roc.index)
-        roc_df = roc.to_frame(name="roc")
-        roc_df["year"] = roc_df.index.isocalendar().year.astype(int)
-        roc_df["period"] = roc_df.index.isocalendar().week.astype(int)
-        w53_years = roc_df[roc_df["period"] == 53]["year"].nunique()
-        if w53_years < 3: roc_df = roc_df[roc_df["period"] != 53]
-        
-        # FIX: Rigidly enforce exactly 52 weeks 
-        periods = list(range(1, 53))
-    else:
-        resampled = close.resample("ME").last().dropna()
-        roc = resampled.pct_change().dropna() * 100
-        roc.index = pd.to_datetime(roc.index)
-        roc_df = roc.to_frame(name="roc")
-        roc_df["year"] = roc_df.index.year
-        roc_df["period"] = roc_df.index.month
-        
-        # FIX: Rigidly enforce exactly 12 months
-        periods = list(range(1, 13))
-
-    roc_df = roc_df[roc_df["year"] >= start_year]
-
+def compute_seasonality(roc_df: pd.DataFrame, timeframe: str, start_year: int) -> dict:
+    # Rigidly enforce the axes
+    periods = list(range(1, 53)) if timeframe == "Weekly" else list(range(1, 13))
+    
     today = datetime.today()
     current_period = today.isocalendar().week if timeframe == "Weekly" else today.month
 
@@ -301,25 +297,26 @@ def make_bar_chart(data: dict, window_key: str, show_winrate: bool, timeframe: s
     periods, cur_period = data["periods"], data["current_period"]
 
     bar_colors = [COLORS["pos_bar"] if v >= 0 else COLORS["neg_bar"] for v in avg.reindex(periods).fillna(0)]
-    annotations = []
-    if show_winrate:
-        for p in periods:
-            v, w = avg.get(p, np.nan), wr.get(p, np.nan)
-            if pd.isna(v) or pd.isna(w): continue
-            y_offset = abs(v) * 0.07 + 0.15
-            annotations.append(dict(
-                x=p, y=v + (y_offset if v >= 0 else -y_offset),
-                text=f"{w:.0f}%", showarrow=False,
-                font=dict(family="IBM Plex Mono", size=9, color="#FFFFFF"),
-                textangle=-90 if timeframe == "Weekly" else 0,
-                xanchor="center", yanchor="bottom" if v >= 0 else "top",
-            ))
+    
+    # NEW FIX: Use Plotly's native 'text' property so it never crops annotations
+    wr_text = []
+    for p in periods:
+        w = wr.get(p, np.nan)
+        if show_winrate and not pd.isna(w):
+            wr_text.append(f"{w:.0f}%")
+        else:
+            wr_text.append("")
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=periods, y=avg.reindex(periods).values,
+        text=wr_text,
+        textposition='outside',
+        textfont=dict(family="IBM Plex Mono", size=10, color="#FFFFFF"),
+        textangle=-90 if timeframe == "Weekly" else 0,
         marker_color=bar_colors, marker_line_width=0, opacity=1.0,
         name="Hist. Avg", hovertemplate="Period %{x}<br>Avg ROC: %{y:.2f}%<extra></extra>",
+        cliponaxis=False # Forces Plotly to show text even if it overlaps the border
     ))
 
     cur_x = [p for p in periods if p in cur.index]
@@ -340,13 +337,13 @@ def make_bar_chart(data: dict, window_key: str, show_winrate: bool, timeframe: s
                       annotation_position="top right")
 
     layout = _base_layout(title)
-    layout["annotations"] = annotations
     layout["xaxis"]["title"] = "Week" if timeframe == "Weekly" else "Month"
     layout["xaxis"]["dtick"] = 1
     
     max_p = 52 if timeframe == "Weekly" else 12
     fig.update_layout(**layout)
     fig.update_xaxes(range=[0.5, max_p + 0.5]) 
+    fig.update_yaxes(autorange=True) # Forces Y-axis to dynamically pad for the new text
     
     return fig
 
@@ -455,14 +452,13 @@ Example: A Win Rate of <strong>80%</strong> for Week 12 means that over the look
 """, unsafe_allow_html=True)
 
 with st.spinner(f"Loading {ticker} data…"):
-    # Using the new function name to completely bypass the sticky cache
-    raw_df = fetch_yfinance_data(ticker, start_year)
+    roc_df = fetch_seasonality_data_v4(ticker, start_year, timeframe)
 
-if raw_df is None or raw_df.empty:
+if roc_df is None or roc_df.empty:
     st.error(f"❌ Could not retrieve data for **{ticker}**. Please check the ticker symbol and try again.")
     st.stop()
 
-data = compute_seasonality(raw_df, timeframe, start_year)
+data = compute_seasonality(roc_df, timeframe, start_year)
 
 def _wr_badge(val):
     return "—" if pd.isna(val) else f'<span style="color:{"#FFFFFF" if val >= 50 else "#BBBBBB"};font-family:IBM Plex Mono">{val:.0f}%</span>'
