@@ -25,7 +25,7 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────
-# CUSTOM CSS — dark, refined, financial aesthetic
+# CUSTOM CSS
 # ─────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -173,8 +173,8 @@ PLOTLY_TEMPLATE = "plotly_dark"
 COLORS = {
     "pos_bar":    "#555555",   
     "neg_bar":    "#BBBBBB",   
-    "cur_year":   "#FFFFFF",                   # Bold white for Cumulative Chart
-    "cur_year_bar": "rgba(255, 255, 255, 0.4)",# Dull, semi-transparent white for Bar Chart line
+    "cur_year":   "#FFFFFF",                   
+    "cur_year_bar": "rgba(255, 255, 255, 0.4)",
     "avg_line":   "#00E5FF",   
     "spaghetti":  "rgba(255, 255, 255, 0.15)", 
     "vline":      "#FF4444",   
@@ -190,7 +190,9 @@ COLORS = {
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_data(ticker: str, start_year: int) -> pd.DataFrame | None:
     try:
-        start_str = f"{start_year}-01-01"
+        # FIX: Fetch starting from Dec 1 of the PREVIOUS year so the very first 
+        # period of the start_year has enough data to calculate pct_change()
+        start_str = f"{start_year - 1}-12-01"
         df = yf.download(ticker, start=start_str, auto_adjust=True, progress=False)
         if df.empty: return None
         close = df["Close"]
@@ -220,6 +222,10 @@ def compute_seasonality(df: pd.DataFrame, timeframe: str, start_year: int) -> di
         roc_df = roc.to_frame(name="roc")
         roc_df["year"] = roc_df.index.year
         roc_df["period"] = roc_df.index.month
+
+    # FIX: Now that pct_change() is calculated, throw away the padding year 
+    # so it doesn't skew the dataset
+    roc_df = roc_df[roc_df["year"] >= start_year]
 
     today = datetime.today()
     current_period = today.isocalendar().week if timeframe == "Weekly" else today.month
@@ -269,7 +275,6 @@ def _base_layout(title: str, height: int = 380) -> dict:
             showline=True,
             tickfont=dict(family="IBM Plex Mono", size=10, color="#5a6278"),
             title_font=dict(family="IBM Plex Mono", size=10, color="#5a6278"),
-            rangemode="nonnegative",  # <--- FORCES X-AXIS TO DROP NEGATIVE PADDING
         ),
         yaxis=dict(
             gridcolor=COLORS["grid"],
@@ -316,14 +321,14 @@ def make_bar_chart(data: dict, window_key: str, show_winrate: bool, timeframe: s
         name="Hist. Avg", hovertemplate="Period %{x}<br>Avg ROC: %{y:.2f}%<extra></extra>",
     ))
 
-    # The dull white line for Current Year on the Bar Chart
+    # FIX: Added black outline to the white dots here
     cur_x = [p for p in periods if p in cur.index]
     if cur_x:
         fig.add_trace(go.Scatter(
             x=cur_x, y=[cur[p] for p in cur_x],
             mode="lines+markers",
             line=dict(color=COLORS["cur_year_bar"], width=2),
-            marker=dict(size=5, color="rgba(255, 255, 255, 0.8)"), # Slightly brighter dots
+            marker=dict(size=7, color="#FFFFFF", line=dict(color="#000000", width=1.5)), 
             name=f"{CURRENT_YEAR} Actual",
             hovertemplate="Period %{x}<br>Actual: %{y:.2f}%<extra></extra>",
             zorder=10,
@@ -338,12 +343,17 @@ def make_bar_chart(data: dict, window_key: str, show_winrate: bool, timeframe: s
     layout["annotations"] = annotations
     layout["xaxis"]["title"] = "Week" if timeframe == "Weekly" else "Month"
     layout["xaxis"]["dtick"] = 1
+    
+    # FIX: Dynamically clamp the X-axis bounds so negative padding is removed perfectly
+    max_p = max(periods) if periods else 12
     fig.update_layout(**layout)
+    fig.update_xaxes(range=[0.5, max_p + 0.5]) 
+    
     return fig
 
 def make_cumulative_chart(data: dict, window_key: str, show_spaghetti: bool, timeframe: str, title: str) -> go.Figure:
     avg, cur, pivot = data[f"avg_{window_key}"], data["cur_roc"], data["pivot"]
-    periods, cur_period, completed_years = data["periods"], data["current_period"], data["completed_years"]
+    periods, cur_period = data["periods"], data["current_period"]
 
     def _cum(series, periods_list):
         vals = [series.get(p, np.nan) for p in periods_list]
@@ -381,7 +391,7 @@ def make_cumulative_chart(data: dict, window_key: str, show_spaghetti: bool, tim
         n = len(cur_x_available) + 1
         fig.add_trace(go.Scatter(
             x=x_anchor[:n], y=_cum(pd.Series({p: cur.get(p, np.nan) for p in periods}), periods)[:n],
-            mode="lines+markers", line=dict(color=COLORS["cur_year"], width=3), # Stays bright white here
+            mode="lines+markers", line=dict(color=COLORS["cur_year"], width=3), 
             marker=dict(size=6, color=COLORS["cur_year"]),
             name=f"{CURRENT_YEAR} Actual (Cum.)", hovertemplate="Period %{x}<br>Cum. Return: %{y:.2f}%<extra></extra>",
         ))
@@ -395,7 +405,12 @@ def make_cumulative_chart(data: dict, window_key: str, show_spaghetti: bool, tim
     layout["xaxis"]["title"] = "Week" if timeframe == "Weekly" else "Month"
     layout["xaxis"]["dtick"] = 1
     layout["yaxis"]["ticksuffix"] = "%"
+    
+    max_p = max(periods) if periods else 12
     fig.update_layout(**layout)
+    # FIX: Allow the cumulative chart to start exactly at 0 to show the anchor
+    fig.update_xaxes(range=[-0.5, max_p + 0.5]) 
+    
     return fig
 
 # ─────────────────────────────────────────────
