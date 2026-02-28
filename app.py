@@ -185,13 +185,11 @@ COLORS = {
 }
 
 # ─────────────────────────────────────────────
-# DATA FETCHING
+# DATA FETCHING (RENAMED TO BREAK CACHE)
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_data(ticker: str, start_year: int) -> pd.DataFrame | None:
+def fetch_yfinance_data(ticker: str, start_year: int) -> pd.DataFrame | None:
     try:
-        # FIX: Fetch starting from Dec 1 of the PREVIOUS year so the very first 
-        # period of the start_year has enough data to calculate pct_change()
         start_str = f"{start_year - 1}-12-01"
         df = yf.download(ticker, start=start_str, auto_adjust=True, progress=False)
         if df.empty: return None
@@ -215,6 +213,9 @@ def compute_seasonality(df: pd.DataFrame, timeframe: str, start_year: int) -> di
         roc_df["period"] = roc_df.index.isocalendar().week.astype(int)
         w53_years = roc_df[roc_df["period"] == 53]["year"].nunique()
         if w53_years < 3: roc_df = roc_df[roc_df["period"] != 53]
+        
+        # FIX: Rigidly enforce exactly 52 weeks 
+        periods = list(range(1, 53))
     else:
         resampled = close.resample("ME").last().dropna()
         roc = resampled.pct_change().dropna() * 100
@@ -222,9 +223,10 @@ def compute_seasonality(df: pd.DataFrame, timeframe: str, start_year: int) -> di
         roc_df = roc.to_frame(name="roc")
         roc_df["year"] = roc_df.index.year
         roc_df["period"] = roc_df.index.month
+        
+        # FIX: Rigidly enforce exactly 12 months
+        periods = list(range(1, 13))
 
-    # FIX: Now that pct_change() is calculated, throw away the padding year 
-    # so it doesn't skew the dataset
     roc_df = roc_df[roc_df["year"] >= start_year]
 
     today = datetime.today()
@@ -235,7 +237,6 @@ def compute_seasonality(df: pd.DataFrame, timeframe: str, start_year: int) -> di
 
     completed_years = sorted(hist_data["year"].unique())
     pivot = hist_data.pivot_table(index="year", columns="period", values="roc")
-    periods = sorted(pivot.columns.tolist())
 
     def _avg(pivot_subset): return pivot_subset.mean()
     def _winrate(pivot_subset): return (pivot_subset > 0).sum() / pivot_subset.notna().sum() * 100
@@ -321,7 +322,6 @@ def make_bar_chart(data: dict, window_key: str, show_winrate: bool, timeframe: s
         name="Hist. Avg", hovertemplate="Period %{x}<br>Avg ROC: %{y:.2f}%<extra></extra>",
     ))
 
-    # FIX: Added black outline to the white dots here
     cur_x = [p for p in periods if p in cur.index]
     if cur_x:
         fig.add_trace(go.Scatter(
@@ -344,8 +344,7 @@ def make_bar_chart(data: dict, window_key: str, show_winrate: bool, timeframe: s
     layout["xaxis"]["title"] = "Week" if timeframe == "Weekly" else "Month"
     layout["xaxis"]["dtick"] = 1
     
-    # FIX: Dynamically clamp the X-axis bounds so negative padding is removed perfectly
-    max_p = max(periods) if periods else 12
+    max_p = 52 if timeframe == "Weekly" else 12
     fig.update_layout(**layout)
     fig.update_xaxes(range=[0.5, max_p + 0.5]) 
     
@@ -406,9 +405,8 @@ def make_cumulative_chart(data: dict, window_key: str, show_spaghetti: bool, tim
     layout["xaxis"]["dtick"] = 1
     layout["yaxis"]["ticksuffix"] = "%"
     
-    max_p = max(periods) if periods else 12
+    max_p = 52 if timeframe == "Weekly" else 12
     fig.update_layout(**layout)
-    # FIX: Allow the cumulative chart to start exactly at 0 to show the anchor
     fig.update_xaxes(range=[-0.5, max_p + 0.5]) 
     
     return fig
@@ -457,7 +455,8 @@ Example: A Win Rate of <strong>80%</strong> for Week 12 means that over the look
 """, unsafe_allow_html=True)
 
 with st.spinner(f"Loading {ticker} data…"):
-    raw_df = fetch_data(ticker, start_year)
+    # Using the new function name to completely bypass the sticky cache
+    raw_df = fetch_yfinance_data(ticker, start_year)
 
 if raw_df is None or raw_df.empty:
     st.error(f"❌ Could not retrieve data for **{ticker}**. Please check the ticker symbol and try again.")
